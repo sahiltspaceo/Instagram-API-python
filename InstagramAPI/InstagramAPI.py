@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import requests
@@ -61,11 +61,14 @@ class InstagramAPI:
     # rank_token          # Rank token
     # IGDataPath          # Data storage path
 
-    def __init__(self, username, password, debug=False, IGDataPath=None):
-        m = hashlib.md5()
-        m.update(username.encode('utf-8') + password.encode('utf-8'))
-        self.device_id = self.generateDeviceId(m.hexdigest())
-        self.setUser(username, password)
+    def __init__(self, username=None, password=None, debug=False, IGDataPath=None):
+        try:
+            m = hashlib.md5()
+            m.update(username.encode('utf-8') + password.encode('utf-8'))
+            self.device_id = self.generateDeviceId(m.hexdigest())
+            self.setUser(username, password)
+        except:
+            pass
         self.isLoggedIn = False
         self.LastResponse = None
         self.s = requests.Session()
@@ -87,10 +90,26 @@ class InstagramAPI:
             proxies = {'http': proxy, 'https': proxy}
             self.s.proxies.update(proxies)
 
-    def login(self, force=False):
+    def login(self,sig=None,uuid=None,force=False):
         if (not self.isLoggedIn or force):
-            if (self.SendRequest('si/fetch_headers/?challenge_type=signup&guid=' + self.generateUUID(False), None, True)):
+            if sig and uuid:
+                self.uuid = uuid
+                if (self.SendRequest('accounts/login/', sig, True)):
+                    self.isLoggedIn = True
+                    self.username_id = self.LastJson["logged_in_user"]["pk"]
+                    self.rank_token = "%s_%s" % (self.username_id, self.uuid)
+                    self.token = self.LastResponse.cookies["csrftoken"]
 
+                    self.syncFeatures()
+                    self.autoCompleteUserList()
+                    self.timelineFeed()
+                    self.getv2Inbox()
+                    self.getRecentActivity()
+                    print("Login success!\n")
+                    return True
+
+            elif (self.SendRequest('si/fetch_headers/?challenge_type=signup&guid=' + self.generateUUID(False), None, True)):
+                print("aa")
                 data = {'phone_id': self.generateUUID(True),
                         '_csrftoken': self.LastResponse.cookies['csrftoken'],
                         'username': self.username,
@@ -113,6 +132,10 @@ class InstagramAPI:
                     print("Login success!\n")
                     return True
 
+            else:
+                pass
+
+                
     def syncFeatures(self):
         data = json.dumps({'_uuid': self.uuid,
                            '_uid': self.username_id,
@@ -124,8 +147,22 @@ class InstagramAPI:
     def autoCompleteUserList(self):
         return self.SendRequest('friendships/autocomplete_user_list/')
 
+    # def timelineFeed(self):
+    #     return self.SendRequest('feed/timeline/')
+    
     def timelineFeed(self):
-        return self.SendRequest('feed/timeline/')
+        tz = -time.timezone
+        data = json.dumps({'_uuid': self.uuid,
+                           '_uid': self.username_id,
+                           '_csrftoken': self.token,
+                           'is_prefetch': '0',
+                           'battery_level': '100',
+                           'is_charging': '1',
+                           'will_sound_on': '1',
+                           'is_on_screen': 'true',
+                           'timezone_offset': tz,
+                           'experiment': 'ig_android_profile_contextual_feed'})
+        return self.SendRequest('feed/timeline/', data)        
 
     def megaphoneLog(self):
         return self.SendRequest('megaphone/log/')
@@ -445,8 +482,9 @@ class InstagramAPI:
             return False
         
     def direct_share(self, media_id, recipients, text=None):
-        if not isinstance(position, list):
-            recipients = [str(recipients)]
+        if type(recipients) != type([]): recipients = [str(recipients)]
+        # if not isinstance(position, list):
+            # recipients = [str(recipients)]
         recipient_users = '"",""'.join(str(r) for r in recipients)
         endpoint = 'direct_v2/threads/broadcast/media_share/?media_type=photo'
         boundary = self.uuid
@@ -879,7 +917,9 @@ class InstagramAPI:
                 parsedData = urllib.quote(data)
         else:
             parsedData = data
+
         return 'ig_sig_key_version=' + self.SIG_KEY_VERSION + '&signed_body=' + hmac.new(self.IG_SIG_KEY.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).hexdigest() + '.' + parsedData
+
 
     def generateDeviceId(self, seed):
         volatile_seed = "12345"
@@ -961,6 +1001,7 @@ class InstagramAPI:
         while True:
             try:
                 if (post is not None):
+                    # print("data ",post)
                     response = self.s.post(self.API_URL + endpoint, data=post, verify=verify)
                 else:
                     response = self.s.get(self.API_URL + endpoint, verify=verify)
@@ -969,6 +1010,8 @@ class InstagramAPI:
                 print('Except on SendRequest (wait 60 sec and resend): ' + str(e))
                 time.sleep(60)
 
+
+        
         if response.status_code == 200:
             self.LastResponse = response
             self.LastJson = json.loads(response.text)
